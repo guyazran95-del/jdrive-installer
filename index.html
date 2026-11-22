@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>JDrive Installer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script type="module" crossorigin src="./assets/index-DpVfuENb.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DRtnAE47.css">
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <p class="eyebrow">JDrive</p>
+        <h1>מתקין אפליקציות לרכב</h1>
+        <p class="lede">
+          חיבור ב־USB ליחידת המולטימדיה והתקנת קובץ APK מקומי דרך ADB.
+          בלי נעילת זמן ובלי מערכת רישוי.
+        </p>
+      </header>
+
+      <div id="browser-banner" class="banner banner-warn" hidden></div>
+
+      <section class="card" id="connect-card">
+        <div class="card-head">
+          <span class="step">1</span>
+          <h2>חיבור לרכב</h2>
+        </div>
+        <p class="hint">
+          ודאו ש־ADB כבר פתוח ברכב, שהרכב חונה, ושהכבל A-to-A מחובר בין המחשב ליציאת ה־USB של המולטימדיה.
+          יש לפתוח את האתר ב־Chrome או Edge.
+        </p>
+        <div class="actions">
+          <button type="button" id="connect-btn" class="btn btn-primary">
+            חיבור לרכב
+          </button>
+          <button type="button" id="disconnect-btn" class="btn btn-ghost" hidden>
+            ניתוק
+          </button>
+        </div>
+        <p id="connect-status" class="status" role="status"></p>
+        <div id="device-info" class="device" hidden>
+          <h3>מכשיר מחובר</h3>
+          <dl id="device-fields"></dl>
+        </div>
+      </section>
+
+      <section class="card" id="install-card">
+        <div class="card-head">
+          <span class="step">2</span>
+          <h2>התקנת APK</h2>
+        </div>
+        <p class="hint">בחרו קובץ <code>.apk</code> מהמחשב. הקובץ יידחף אל הרכב ויותקן עם <code>pm install</code>.</p>
+        <label class="file-pick">
+          <input id="apk-input" type="file" accept=".apk,application/vnd.android.package-archive" />
+          <span id="file-label" class="file-label">בחירת קובץ APK…</span>
+        </label>
+        <p id="file-meta" class="muted"></p>
+        <div class="actions">
+          <button type="button" id="install-btn" class="btn btn-primary" disabled>
+            התקנה לרכב
+          </button>
+        </div>
+        <div id="progress-wrap" class="progress-wrap" hidden>
+          <div class="progress-bar" aria-hidden="true">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+          <p id="progress-text" class="muted"></p>
+        </div>
+        <p id="install-status" class="status" role="status"></p>
+        <pre id="install-output" class="output" hidden></pre>
+      </section>
+
+      <section class="card steps-card">
+        <h2>לפני החיבור</h2>
+        <ol>
+          <li>הרכב חונה, המנוע או ההצתה במצב שמאפשר למולטימדיה לעבוד. לא מתקינים בזמן נסיעה.</li>
+          <li>ADB כבר מופעל ביחידת הראש (המתקין הזה לא פותח ADB בעצמו).</li>
+          <li>חברו כבל USB A-to-A בין המחשב ליציאת ה־USB של המולטימדיה.</li>
+          <li>סגרו תוכניות שתופסות את ה־ADB במחשב, כולל Android Studio, וכך גם <code>adb kill-server</code> אם רץ שרת ADB מקומי.</li>
+          <li>לחצו «חיבור לרכב», בחרו את המכשיר בחלון של הדפדפן, ואשרו במסך הרכב את דיאלוג ההרשאה של ADB (מומלץ לסמן Always allow).</li>
+        </ol>
+      </section>
+
+      <footer class="foot">
+        <p>JDrive Installer · מקורי · ללא ניסיון מוגבל בזמן</p>
+      </footer>
+    </div>
+  </body>
+</html>
