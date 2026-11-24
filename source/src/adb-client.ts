@@ -777,3 +777,173 @@ echo "===== סוף הדאמפ ====="
   ].join("\n");
 }
 
+
+const HAB_PROBE_ASSET = "hab-probe";
+const HAB_PROBE_REMOTE = "/data/local/tmp/jdrive-hab-probe";
+const HAB_PROBE_OUT = "/data/local/tmp/jdrive-hab-probe.txt";
+const HAB_PROBE_RUN = "/data/local/tmp/jdrive-hab-probe-run.txt";
+const JCONFIG_PKG = "com.frodrigues.jconfig";
+const JDRIVE_DEBUG_PKG = "com.azran.jdrive.debug";
+const JDRIVE_RELEASE_PKG = "com.azran.jdrive";
+
+async function pushBytes(
+  session: CarSession,
+  remotePath: string,
+  bytes: Uint8Array,
+  permission: number,
+): Promise<void> {
+  const sync = await session.adb.sync();
+  try {
+    await sync.write({
+      filename: remotePath,
+      file: bytesToStream(bytes),
+      permission,
+    });
+  } finally {
+    await sync.dispose();
+  }
+}
+
+async function loadHabProbeBinary(): Promise<Uint8Array> {
+  const url = new URL(`${HAB_PROBE_ASSET}?v=9`, document.baseURI).href;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch ${HAB_PROBE_ASSET}: HTTP ${res.status}`);
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.byteLength < 64) {
+    throw new Error(`${HAB_PROBE_ASSET} looks empty or corrupt`);
+  }
+  return bytes;
+}
+
+/**
+ * HAB-PROTOCOL.md §9 probe over WebUSB.
+ * Force-stops JConfig (does not uninstall), pushes a small arm64 helper,
+ * runs VC_OPEN/RECV/VC_CLOSE on MMIDs 201–204, returns the text report.
+ */
+export async function runHabProtocolProbe(
+  session: CarSession,
+  onStatus?: StatusFn,
+): Promise<string> {
+  const started = new Date().toISOString();
+  const q = (s: string) => s.replace(/'/g, "'\\''");
+  const sections: string[] = [
+    "JDrive HAB protocol probe (WebUSB installer v9)",
+    `time: ${started}`,
+    `usb: ${session.info.usbName || ""}`,
+    `model: ${session.info.model || ""}`,
+    `manufacturer: ${session.info.manufacturer || ""}`,
+    `serial: ${session.info.serial || ""}`,
+    `product: ${session.info.product || ""}`,
+    `build: ${session.info.buildId || ""}`,
+    "note: force-stopped JConfig/JDrive recorder processes; nothing was uninstalled",
+    "",
+  ];
+
+  onStatus?.("עוצרים את ההקלטה של JConfig (force-stop, בלי הסרה)…");
+  const stopCmd = `
+set +e
+echo "===== force-stop (no uninstall) ====="
+echo "before:"
+ps -A 2>/dev/null | grep -E 'frodrigues|jconfig|azran.jdrive' || true
+am force-stop '${q(JCONFIG_PKG)}' 2>&1 || true
+am force-stop '${q(JDRIVE_DEBUG_PKG)}' 2>&1 || true
+am force-stop '${q(JDRIVE_RELEASE_PKG)}' 2>&1 || true
+sleep 1
+echo "after:"
+ps -A 2>/dev/null | grep -E 'frodrigues|jconfig|azran.jdrive' || echo "(none running)"
+echo "camera=$(pidof -s com.frodrigues.jconfig:camera 2>/dev/null || echo none)"
+`.trim();
+  const stopOut = await shellText(session, ["sh", "-c", stopCmd]);
+  sections.push(stopOut.trim(), "");
+
+  onStatus?.("דוחפים את כלי הבדיקה לרכב…");
+  try {
+    const bytes = await loadHabProbeBinary();
+    await pushBytes(session, HAB_PROBE_REMOTE, bytes, 0o755);
+  } catch (error) {
+    if (looksLikeDisconnect(error)) throw error;
+    throw new InstallerError(
+      "push-failed",
+      "Failed to push the HAB probe helper to the head unit.",
+      errorMessage(error),
+    );
+  }
+
+  onStatus?.("מריצים את בדיקת ה־HAB (עד כ־45 שניות אם הערוצים תפוסים)…");
+  const runCmd = `
+set +e
+chmod 755 '${q(HAB_PROBE_REMOTE)}' 2>/dev/null
+rm -f '${q(HAB_PROBE_OUT)}' '${q(HAB_PROBE_RUN)}'
+echo "===== hab-probe binary ====="
+ls -lZ '${q(HAB_PROBE_REMOTE)}' 2>&1
+echo "===== run ====="
+'${q(HAB_PROBE_REMOTE)}' > '${q(HAB_PROBE_RUN)}' 2>&1
+ec=$?
+echo "__PROBE_EXIT=$ec"
+if [ "$ec" -ne 0 ]; then
+  echo "direct exec failed, trying linker64…"
+  /system/bin/linker64 '${q(HAB_PROBE_REMOTE)}' >> '${q(HAB_PROBE_RUN)}' 2>&1
+  ec=$?
+  echo "__LINKER_EXIT=$ec"
+fi
+echo "__PROBE_STDOUT__"
+cat '${q(HAB_PROBE_RUN)}' 2>/dev/null
+echo "__END_PROBE_STDOUT__"
+echo "__PROBE_FILE__"
+if [ -f '${q(HAB_PROBE_OUT)}' ]; then cat '${q(HAB_PROBE_OUT)}'; else echo "(no ${HAB_PROBE_OUT})"; fi
+echo "__END_PROBE_FILE__"
+`.trim();
+  let runOut = await shellText(session, ["sh", "-c", runCmd]);
+  sections.push(runOut.trim(), "");
+
+  const directFailed =
+    /__PROBE_EXIT=([1-9]\d*)/.test(runOut) &&
+    !/VC_OPEN ok|open: ok|RECV ok|open FAILED/.test(runOut);
+
+  if (directFailed || (!/open: ok|open FAILED|VC_OPEN/.test(runOut))) {
+    onStatus?.("מנסים נתיב חלופי דרך האפליקציה שהותקנה (app_process)…");
+    const fallback = `
+set +e
+PKG='${q(JDRIVE_DEBUG_PKG)}'
+APK=\$(pm path "\$PKG" 2>/dev/null | head -n 1 | sed 's/^package://')
+if [ -z "\$APK" ]; then
+  PKG='${q(JDRIVE_RELEASE_PKG)}'
+  APK=\$(pm path "\$PKG" 2>/dev/null | head -n 1 | sed 's/^package://')
+fi
+echo "===== app_process fallback ====="
+echo "pkg=\$PKG apk=\$APK"
+if [ -z "\$APK" ]; then
+  echo "JDrive is not installed — install it first, then run the probe again."
+  exit 0
+fi
+LIBDIR=\$(dirname "\$APK")/lib/arm64
+if [ ! -d "\$LIBDIR" ]; then
+  LIBDIR=\$(dirname "\$APK")/lib/arm64-v8a
+fi
+SO=\$(find "\$(dirname "\$APK")" /data/app -name libjdrive_camera.so 2>/dev/null | head -n 1)
+if [ -n "\$SO" ]; then LIBDIR=\$(dirname "\$SO"); fi
+echo "libdir=\$LIBDIR so=\$SO"
+ls -l "\$LIBDIR" 2>&1 | head
+mkdir -p /data/local/tmp/dalvik-cache
+export ANDROID_DATA=/data/local/tmp
+export CLASSPATH="\$APK"
+export LD_LIBRARY_PATH="\$LIBDIR:\${LD_LIBRARY_PATH}"
+rm -f '${q(HAB_PROBE_OUT)}' '${q(HAB_PROBE_RUN)}'
+app_process /system/bin com.azran.jdrive.camera.HabIoctlProbe > '${q(HAB_PROBE_RUN)}' 2>&1
+echo "__APP_PROCESS_EXIT=\$?"
+echo "__APP_PROCESS_STDOUT__"
+cat '${q(HAB_PROBE_RUN)}' 2>/dev/null
+echo "__END_APP_PROCESS_STDOUT__"
+echo "__PROBE_FILE__"
+if [ -f '${q(HAB_PROBE_OUT)}' ]; then cat '${q(HAB_PROBE_OUT)}'; else echo "(no ${HAB_PROBE_OUT})"; fi
+echo "__END_PROBE_FILE__"
+`.trim();
+    const fbOut = await shellText(session, ["sh", "-c", fallback]);
+    sections.push(fbOut.trim(), "");
+    runOut += "\n" + fbOut;
+  }
+
+  return sections.join("\n").trim() + "\n";
+}

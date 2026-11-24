@@ -3,6 +3,7 @@ import {
   connectToCar,
   getWebUsbSupport,
   installApk,
+  runHabProtocolProbe,
   type CarSession,
 } from "./adb-client";
 import { InstallerError, errorMessage } from "./errors";
@@ -27,6 +28,10 @@ const dumpBtn = document.querySelector("#dump-btn") as HTMLButtonElement;
 const dumpDownloadBtn = document.querySelector("#dump-download-btn") as HTMLButtonElement;
 const dumpStatus = document.querySelector("#dump-status") as HTMLParagraphElement;
 const dumpOutput = document.querySelector("#dump-output") as HTMLPreElement;
+const probeBtn = document.querySelector("#probe-btn") as HTMLButtonElement;
+const probeDownloadBtn = document.querySelector("#probe-download-btn") as HTMLButtonElement;
+const probeStatus = document.querySelector("#probe-status") as HTMLParagraphElement;
+const probeOutput = document.querySelector("#probe-output") as HTMLPreElement;
 
 let session: CarSession | undefined;
 let selectedFile: File | undefined;
@@ -34,6 +39,12 @@ let connecting = false;
 let installing = false;
 let dumping = false;
 let lastDumpText = "";
+let lastProbeText = "";
+let probing = false;
+const BUNDLED_APK_URL = "JDrive-debug.apk?v=9";
+const BUNDLED_APK_NAME = "JDrive-debug.apk";
+const BUNDLED_APK_LABEL = "JDrive 0.1.1-debug (מצלמות HAB)";
+let bundledFile: File | undefined;
 
 const hebrew: Record<string, string> = {
   "insecure-context":
@@ -87,11 +98,14 @@ function showOutput(text: string | undefined) {
 }
 
 function setInstallEnabled() {
-  const ready = Boolean(session) && Boolean(selectedFile) && !installing && !connecting && !dumping;
+  const busy = installing || connecting || dumping || probing;
+  const apk = selectedFile || bundledFile;
+  const ready = Boolean(session) && Boolean(apk) && !busy;
   installBtn.disabled = !ready;
   installCard.classList.toggle("is-disabled", !session);
-  apkInput.disabled = !session || installing || dumping;
-  dumpBtn.disabled = !session || installing || connecting || dumping;
+  apkInput.disabled = !session || busy;
+  dumpBtn.disabled = !session || busy;
+  probeBtn.disabled = !session || busy;
 }
 
 function showDumpOutput(text: string | undefined) {
@@ -105,17 +119,47 @@ function showDumpOutput(text: string | undefined) {
   dumpOutput.scrollTop = 0;
 }
 
-function downloadDump(text: string) {
+function downloadText(text: string, prefix: string) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `jdrive-cam-dump-${stamp}.txt`;
+  a.download = `${prefix}-${stamp}.txt`;
   document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function showProbeOutput(text: string | undefined) {
+  if (!text) {
+    probeOutput.hidden = true;
+    probeOutput.textContent = "";
+    return;
+  }
+  probeOutput.hidden = false;
+  probeOutput.textContent = text;
+  probeOutput.scrollTop = 0;
+}
+
+async function loadBundledApk(): Promise<void> {
+  const url = new URL(BUNDLED_APK_URL, document.baseURI).href;
+  const res = await fetch(url);
+  if (!res.ok) {
+    fileLabel.textContent = "לא נמצא APK כלול — בחרו קובץ מהמחשב";
+    fileMeta.textContent = "";
+    return;
+  }
+  const blob = await res.blob();
+  bundledFile = new File([blob], BUNDLED_APK_NAME, {
+    type: "application/vnd.android.package-archive",
+  });
+  if (!selectedFile) {
+    fileLabel.textContent = BUNDLED_APK_LABEL;
+    fileMeta.textContent = `${formatBytes(bundledFile.size)} · הכלול באתר (v9)`;
+  }
+  setInstallEnabled();
 }
 
 function renderDevice(current: CarSession) {
@@ -312,7 +356,8 @@ apkInput.addEventListener("change", () => {
 
 installBtn.addEventListener("click", () => {
   void (async () => {
-    if (!session || !selectedFile || installing) return;
+    const apkFile = selectedFile || bundledFile;
+    if (!session || !apkFile || installing) return;
     installing = true;
     setInstallEnabled();
     connectBtn.disabled = true;
@@ -320,9 +365,13 @@ installBtn.addEventListener("click", () => {
     resetProgress();
     progressWrap.hidden = false;
     showOutput(undefined);
-    setStatus(installStatus, "מתחילים התקנה…", "warn");
+    setStatus(
+      installStatus,
+      `מתקינים את ${apkFile.name === BUNDLED_APK_NAME ? BUNDLED_APK_LABEL : apkFile.name}…`,
+      "warn",
+    );
     try {
-      const result = await installApk(session, selectedFile, {
+      const result = await installApk(session, apkFile, {
         onStatus(message) {
           const he = mapInstallStatus(message);
           setStatus(installStatus, he, "warn");
@@ -389,8 +438,58 @@ dumpBtn.addEventListener("click", () => {
 });
 
 dumpDownloadBtn.addEventListener("click", () => {
-  if (lastDumpText) downloadDump(lastDumpText);
+  if (lastDumpText) downloadText(lastDumpText, "jdrive-cam-dump");
+});
+
+probeBtn.addEventListener("click", () => {
+  void (async () => {
+    if (!session || dumping || installing || connecting || probing) return;
+    probing = true;
+    lastProbeText = "";
+    probeDownloadBtn.hidden = true;
+    setInstallEnabled();
+    connectBtn.disabled = true;
+    disconnectBtn.disabled = true;
+    showProbeOutput(undefined);
+    setStatus(probeStatus, "מתחילים בדיקת HAB… עוצרים את JConfig ואז מריצים את ה־Probe.", "warn");
+    try {
+      const text = await runHabProtocolProbe(session, (message) => {
+        setStatus(probeStatus, message, "warn");
+      });
+      lastProbeText = text;
+      showProbeOutput(text);
+      probeDownloadBtn.hidden = false;
+      const opened = /open: ok/i.test(text);
+      const gotRecv = /RECV ok sizebytes=/i.test(text);
+      const openFail = /open FAILED/i.test(text);
+      setStatus(
+        probeStatus,
+        gotRecv
+          ? "הבדיקה הצליחה וחזרה נתונים מהרכב. הורידו את הקובץ ושלחו אותו."
+          : opened
+            ? "נפתח /dev/hab, אבל לא התקבלה כותרת פריים (RECV). הורידו את הקובץ ושלחו אותו — זה עדיין שימושי."
+            : openFail
+              ? "לא ניתן לפתוח את /dev/hab. הורידו את הקובץ ושלחו אותו."
+              : "הבדיקה הסתיימה. הורידו את הקובץ ושלחו אותו.",
+        gotRecv || opened ? "ok" : "warn",
+      );
+    } catch (error) {
+      const { text, detail } = friendlyError(error);
+      setStatus(probeStatus, text, "err");
+      showProbeOutput(detail ?? (error instanceof InstallerError ? error.message : errorMessage(error)));
+    } finally {
+      probing = false;
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = false;
+      setInstallEnabled();
+    }
+  })();
+});
+
+probeDownloadBtn.addEventListener("click", () => {
+  if (lastProbeText) downloadText(lastProbeText, "jdrive-hab-probe");
 });
 
 checkBrowser();
 setInstallEnabled();
+void loadBundledApk();

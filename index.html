@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <script type="module" crossorigin src="./assets/index-WfjOynDT.js"></script>
+    <script type="module" crossorigin src="./assets/index-3zmvBoON.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-ZHWJS6eA.css">
   </head>
   <body>
@@ -56,15 +56,19 @@
           <span class="step">2</span>
           <h2>התקנת APK</h2>
         </div>
-        <p class="hint">בחרו קובץ <code>.apk</code> מהמחשב. הקובץ יידחף אל הרכב ויותקן עם <code>pm install</code>.</p>
+        <p class="hint">
+          האתר כולל את JDrive <strong>0.1.1-debug</strong> עם תמיכה במצלמות (<code>/dev/hab</code>).
+          לחצו על «התקנת JDrive (מצלמות)» — אין צורך לבחור קובץ.
+          אפשר גם לבחור APK אחר מהמחשב אם תרצו.
+        </p>
         <label class="file-pick">
           <input id="apk-input" type="file" accept=".apk,application/vnd.android.package-archive" />
-          <span id="file-label" class="file-label">בחירת קובץ APK…</span>
+          <span id="file-label" class="file-label">טוענים את JDrive הכלול באתר…</span>
         </label>
         <p id="file-meta" class="muted"></p>
         <div class="actions">
           <button type="button" id="install-btn" class="btn btn-primary" disabled>
-            התקנה לרכב
+            התקנת JDrive (מצלמות)
           </button>
         </div>
         <div id="progress-wrap" class="progress-wrap" hidden>
@@ -78,14 +82,38 @@
       </section>
 
 
-      <section class="card" id="dump-card">
+      <section class="card" id="probe-card">
         <div class="card-head">
           <span class="step">3</span>
+          <h2>בדיקת מצלמה (Probe)</h2>
+        </div>
+        <p class="hint">
+          אחרי ההתקנה, לחצו כאן. הבדיקה קודם עוצרת את ההקלטה של JConfig
+          (<code>am force-stop</code> בלבד — בלי להסיר שום אפליקציה),
+          ואז מריצה את בדיקת פרוטוקול ה־HAB על <code>/dev/hab</code>
+          (פתיחת הערוצים 201–204 וקריאת כותרת הפריים).
+          בסיום אפשר להוריד קובץ ‎.txt ולשלוח אותו.
+        </p>
+        <div class="actions">
+          <button type="button" id="probe-btn" class="btn btn-primary" disabled>
+            בדיקת מצלמה (Probe)
+          </button>
+          <button type="button" id="probe-download-btn" class="btn btn-ghost" hidden>
+            הורדת תוצאת הבדיקה (.txt)
+          </button>
+        </div>
+        <p id="probe-status" class="status" role="status"></p>
+        <pre id="probe-output" class="output output-tall" hidden></pre>
+      </section>
+
+      <section class="card" id="dump-card">
+        <div class="card-head">
+          <span class="step">4</span>
           <h2>דאמפ מצלמות</h2>
         </div>
         <p class="hint">
-          ודאו ש־JConfig מקליט ברכב, ואז לחצו על הכפתור.
-          הפעולה רק קוראת מידע מהרכב (תהליכים, /dev/hab, הרשאות, logcat, קבצי הקלטה) — בלי להתקין ובלי למחוק כלום.
+          דאמפ סביבה כללי (תהליכים, /dev/hab, הרשאות, logcat). אופציונלי, לא מחליף את בדיקת ה־Probe למעלה.
+          הפעולה רק קוראת מידע — בלי להתקין ובלי למחוק כלום.
         </p>
         <div class="actions">
           <button type="button" id="dump-btn" class="btn btn-primary" disabled>
@@ -111,7 +139,7 @@
       </section>
 
       <footer class="foot">
-        <p>JDrive Installer · v8 · דאמפ מצלמות</p>
+        <p>JDrive Installer · v9 · JDrive 0.1.1-debug · בדיקת מצלמה</p>
       </footer>
     </div>
   </body>
