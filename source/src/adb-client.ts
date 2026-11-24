@@ -300,6 +300,7 @@ export async function installApk(
   }
 
   let output = "";
+  let sessionOutput = "";
   try {
     // Best-effort clear of DISALLOW_INSTALL_APPS — helps fallback; SessionInstaller
     // does not rely on it.
@@ -332,6 +333,7 @@ export async function installApk(
     options?.onStatus?.("Installing via PackageInstaller session (app_process)…");
     try {
       output = await runSessionInstaller(session, remoteDex, remotePath);
+      sessionOutput = output;
     } catch (error) {
       if (looksLikeDisconnect(error)) {
         throw new InstallerError(
@@ -342,6 +344,7 @@ export async function installApk(
       }
       // Fall through to pm install with the error text preserved.
       output = errorMessage(error);
+      sessionOutput = output;
     }
 
     if (isPmSuccess(output)) {
@@ -423,7 +426,10 @@ export async function installApk(
 
   const success = isPmSuccess(output);
   if (!success) {
-    const detail = output.trim() || "Install produced no output.";
+    const sessionDetail = sessionOutput.trim()
+      ? `[session-installer output]\n${sessionOutput.trim()}\n\n[pm fallback output]\n`
+      : "";
+    const detail = sessionDetail + (output.trim() || "Install produced no output.");
     const restrictionHint = isInstallRestriction(detail)
       ? " Restriction still blocks shell pm install; session installer should be used (and may have failed earlier — see detail)."
       : "";
@@ -490,8 +496,22 @@ async function runSessionInstaller(
 ): Promise<string> {
   // Escape for embedding in a single-quoted sh -c string.
   const q = (s: string) => s.replace(/'/g, "'\\''");
+  const stamp = Date.now();
+  const outFile = `/data/local/tmp/az-session-out-${stamp}.txt`;
+  const logFile = `/data/local/tmp/az-session-log-${stamp}.txt`;
+  // 2nd arg is the Java diagnostic log (FileOutputStream). app_process on this
+  // ROM swallows System.out/err, so the file is the only reliable signal.
+  const inner =
+    `CLASSPATH='${q(remoteDex)}' app_process /system/bin ${SESSION_INSTALLER_CLASS} '${q(remoteApk)}' '${q(logFile)}'`;
   const cmd =
-    `CLASSPATH='${q(remoteDex)}' app_process /system/bin ${SESSION_INSTALLER_CLASS} '${q(remoteApk)}'`;
+    `${inner} >'${outFile}' 2>&1; echo "__SESSION_EXIT=$?"; ` +
+    `echo "__OUTFILE__"; cat '${outFile}' 2>/dev/null; echo "__ENDFILE__"; ` +
+    `echo "__AZLOG__"; ` +
+    `if [ -f '${logFile}' ]; then wc -c '${logFile}'; cat '${logFile}'; ` +
+    `else echo "(no log file — main() probably never started)"; fi; ` +
+    `echo "__ENDAZLOG__"; ` +
+    `rm -f '${outFile}' '${logFile}'; ` +
+    `echo "__LOGCAT__"; logcat -d -t 80 2>/dev/null | grep -iE 'AndroidRuntime|app_process|SessionInstaller|PackageInstaller|dalvik|zygote|avc:' | tail -n 30`;
   return shellText(session, ["sh", "-c", cmd]);
 }
 
