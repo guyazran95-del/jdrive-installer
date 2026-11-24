@@ -1,4 +1,5 @@
 import {
+  collectCameraDump,
   connectToCar,
   getWebUsbSupport,
   installApk,
@@ -22,11 +23,17 @@ const progressText = document.querySelector("#progress-text") as HTMLParagraphEl
 const installStatus = document.querySelector("#install-status") as HTMLParagraphElement;
 const installOutput = document.querySelector("#install-output") as HTMLPreElement;
 const browserBanner = document.querySelector("#browser-banner") as HTMLDivElement;
+const dumpBtn = document.querySelector("#dump-btn") as HTMLButtonElement;
+const dumpDownloadBtn = document.querySelector("#dump-download-btn") as HTMLButtonElement;
+const dumpStatus = document.querySelector("#dump-status") as HTMLParagraphElement;
+const dumpOutput = document.querySelector("#dump-output") as HTMLPreElement;
 
 let session: CarSession | undefined;
 let selectedFile: File | undefined;
 let connecting = false;
 let installing = false;
+let dumping = false;
+let lastDumpText = "";
 
 const hebrew: Record<string, string> = {
   "insecure-context":
@@ -80,10 +87,35 @@ function showOutput(text: string | undefined) {
 }
 
 function setInstallEnabled() {
-  const ready = Boolean(session) && Boolean(selectedFile) && !installing && !connecting;
+  const ready = Boolean(session) && Boolean(selectedFile) && !installing && !connecting && !dumping;
   installBtn.disabled = !ready;
   installCard.classList.toggle("is-disabled", !session);
-  apkInput.disabled = !session || installing;
+  apkInput.disabled = !session || installing || dumping;
+  dumpBtn.disabled = !session || installing || connecting || dumping;
+}
+
+function showDumpOutput(text: string | undefined) {
+  if (!text) {
+    dumpOutput.hidden = true;
+    dumpOutput.textContent = "";
+    return;
+  }
+  dumpOutput.hidden = false;
+  dumpOutput.textContent = text;
+  dumpOutput.scrollTop = 0;
+}
+
+function downloadDump(text: string) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `jdrive-cam-dump-${stamp}.txt`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function renderDevice(current: CarSession) {
@@ -314,6 +346,50 @@ installBtn.addEventListener("click", () => {
       setInstallEnabled();
     }
   })();
+});
+
+
+dumpBtn.addEventListener("click", () => {
+  void (async () => {
+    if (!session || dumping || installing || connecting) return;
+    dumping = true;
+    lastDumpText = "";
+    dumpDownloadBtn.hidden = true;
+    setInstallEnabled();
+    connectBtn.disabled = true;
+    disconnectBtn.disabled = true;
+    showDumpOutput(undefined);
+    setStatus(dumpStatus, "אוספים נתונים מהרכב. ודאו ש־JConfig מקליט…", "warn");
+    try {
+      const text = await collectCameraDump(session, (message) => {
+        setStatus(dumpStatus, message, "warn");
+      });
+      lastDumpText = text;
+      showDumpOutput(text);
+      dumpDownloadBtn.hidden = false;
+      const hasCameraProc = /camera_pid=\d+/.test(text) || /camera=\d+/.test(text);
+      setStatus(
+        dumpStatus,
+        hasCameraProc
+          ? "הדאמפ מוכן. אפשר להוריד את הקובץ ולשלוח אותו."
+          : "הדאמפ מוכן, אבל תהליך ההקלטה של JConfig לא נמצא. ודאו שההקלטה פעילה ונסו שוב.",
+        hasCameraProc ? "ok" : "warn",
+      );
+    } catch (error) {
+      const { text, detail } = friendlyError(error);
+      setStatus(dumpStatus, text, "err");
+      showDumpOutput(detail ?? (error instanceof InstallerError ? error.message : errorMessage(error)));
+    } finally {
+      dumping = false;
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = false;
+      setInstallEnabled();
+    }
+  })();
+});
+
+dumpDownloadBtn.addEventListener("click", () => {
+  if (lastDumpText) downloadDump(lastDumpText);
 });
 
 checkBrowser();

@@ -680,3 +680,100 @@ async function listInstallUserIds(
   // Prefer 0 first, then higher ids (head-unit UI often lives on 10).
   return Array.from(ids).sort((a, b) => Number(a) - Number(b));
 }
+
+
+/** Read-only camera diagnostics. Does not install or delete anything. */
+export async function collectCameraDump(
+  session: CarSession,
+  onStatus?: StatusFn,
+): Promise<string> {
+  onStatus?.("אוספים נתונים מהרכב…");
+  const started = new Date().toISOString();
+  const cmd = `
+echo "===== מזהה מכשיר ====="
+id
+echo
+date
+echo
+echo "===== מאפייני מערכת (camera / hab / dvr) ====="
+getprop | grep -iE 'camera|hab|avm|dvr|rvc|dms|ro.arch|ro.product' || true
+echo
+echo "===== צמתי התקן (/dev/hab, /dev/video) ====="
+ls -lZ /dev/hab /dev/video* /dev/v4l* /dev/qcarcam* /dev/mdtv* /dev/seccam* /dev/avm* /dev/dvr* /dev/socket 2>/dev/null
+echo "----"
+ls -l /dev 2>/dev/null | grep -iE 'hab|cam|avm|dvr|csi|isp|v4l|video' || true
+echo "----"
+stat -c 'hab path=%n mode=%A uid=%U gid=%G selinux=%C' /dev/hab 2>/dev/null || echo 'stat /dev/hab: not found'
+echo
+echo "===== תהליכים (JConfig) ====="
+ps -A 2>/dev/null | grep -E 'frodrigues|jconfig' || true
+echo "main=$(pidof -s com.frodrigues.jconfig 2>/dev/null)"
+echo "camera=$(pidof -s com.frodrigues.jconfig:camera 2>/dev/null)"
+echo
+p=$(pidof -s com.frodrigues.jconfig:camera 2>/dev/null || true)
+echo "===== קבצים פתוחים של תהליך :camera ====="
+echo "camera_pid=$p"
+if [ -n "$p" ]; then
+  echo "---- fd ----"
+  ls -l /proc/$p/fd 2>/dev/null || true
+  echo "---- lsof ----"
+  lsof -p $p 2>/dev/null || echo LSOF_NOT_ON_DEVICE
+else
+  echo "NO_CAMERA_PROCESS — ודאו ש-JConfig מקליט כעת"
+fi
+echo
+echo "===== מפות זיכרון (:camera) ====="
+if [ -n "$p" ]; then
+  grep -E 'hab|video|mycar|camera_bridge|r-xp|\\.so' /proc/$p/maps 2>/dev/null || true
+else
+  echo "NO_CAMERA_PROCESS"
+fi
+echo
+echo "===== הרשאות (dumpsys package, מסונן) ====="
+dumpsys package com.frodrigues.jconfig 2>/dev/null | grep -E 'userId=|sharedUser=|pkgFlags=|granted=|gids=|CAMERA|SECURE|STORAGE|LOCATION|WAKE|foreground' || true
+echo
+echo "===== dumpsys package (חתוך ל-250 שורות) ====="
+dumpsys package com.frodrigues.jconfig 2>/dev/null | tail -n 250
+echo
+echo "===== שירותי מצלמה (dumpsys media.camera) ====="
+dumpsys media.camera 2>/dev/null | tail -n 250
+echo
+echo "===== logcat (מסונן) ====="
+logcat -d -t 800 -v threadtime 2>/dev/null | grep -iE 'frodrigues|jconfig|NativeCamera|NativeCapture|Dvr|hab|mycar_camera|CAMERA_|dvr-' | tail -n 300 || true
+echo
+echo "===== הקלטות (USB DVR) ====="
+echo "---- usb0 ----"
+ls -lR /storage/usb0/DVR 2>/dev/null | tail -n 80 || echo 'no /storage/usb0/DVR'
+echo "---- usb1 ----"
+ls -lR /storage/usb1/DVR 2>/dev/null | tail -n 80 || echo 'no /storage/usb1/DVR'
+echo "---- mounts ----"
+df -h /storage/usb0 /storage/usb1 /storage/emulated/0 2>/dev/null || true
+echo "---- קבצי וידאו אחרונים ----"
+find /storage/usb0 /storage/usb1 /storage/emulated/0 /sdcard /data/data/com.frodrigues.jconfig /data/user/0/com.frodrigues.jconfig \\( -iname '*.mp4' -o -iname '*.h265' -o -iname '*.hevc' \\) 2>/dev/null | tail -n 80
+echo
+echo "===== dmesg ====="
+dmesg 2>/dev/null | grep -iE 'avc:|hab|jconfig|frodrigues|camera|v4l' | tail -n 120 || true
+echo
+echo "===== סוף הדאמפ ====="
+`.trim();
+
+  const body = await shellText(session, ["sh", "-c", cmd]);
+  const info = session.info;
+  return [
+    "JDrive camera dump",
+    `time: ${started}`,
+    `usb: ${info.usbName || ""}`,
+    `model: ${info.model || ""}`,
+    `manufacturer: ${info.manufacturer || ""}`,
+    `serial: ${info.serial || ""}`,
+    `product: ${info.product || ""}`,
+    `build: ${info.buildId || ""}`,
+    "package: com.frodrigues.jconfig",
+    "process: com.frodrigues.jconfig:camera",
+    "note: read-only diagnostics; nothing was installed or deleted",
+    "",
+    body.trim(),
+    "",
+  ].join("\n");
+}
+

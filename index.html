@@ -11,8 +11,8 @@
       href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <script type="module" crossorigin src="./assets/index-B_wYwR1d.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DRtnAE47.css">
+    <script type="module" crossorigin src="./assets/index-WfjOynDT.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-ZHWJS6eA.css">
   </head>
   <body>
     <div class="page">
@@ -77,6 +77,28 @@
         <pre id="install-output" class="output" hidden></pre>
       </section>
 
+
+      <section class="card" id="dump-card">
+        <div class="card-head">
+          <span class="step">3</span>
+          <h2>דאמפ מצלמות</h2>
+        </div>
+        <p class="hint">
+          ודאו ש־JConfig מקליט ברכב, ואז לחצו על הכפתור.
+          הפעולה רק קוראת מידע מהרכב (תהליכים, /dev/hab, הרשאות, logcat, קבצי הקלטה) — בלי להתקין ובלי למחוק כלום.
+        </p>
+        <div class="actions">
+          <button type="button" id="dump-btn" class="btn btn-primary" disabled>
+            דאמפ מצלמות
+          </button>
+          <button type="button" id="dump-download-btn" class="btn btn-ghost" hidden>
+            הורדת הדאמפ (.txt)
+          </button>
+        </div>
+        <p id="dump-status" class="status" role="status"></p>
+        <pre id="dump-output" class="output output-tall" hidden></pre>
+      </section>
+
       <section class="card steps-card">
         <h2>לפני החיבור</h2>
         <ol>
@@ -89,7 +111,7 @@
       </section>
 
       <footer class="foot">
-        <p>JDrive Installer · מקורי · ללא ניסיון מוגבל בזמן</p>
+        <p>JDrive Installer · v8 · דאמפ מצלמות</p>
       </footer>
     </div>
   </body>
