@@ -499,19 +499,88 @@ async function runSessionInstaller(
   const stamp = Date.now();
   const outFile = `/data/local/tmp/az-session-out-${stamp}.txt`;
   const logFile = `/data/local/tmp/az-session-log-${stamp}.txt`;
-  // 2nd arg is the Java diagnostic log (FileOutputStream). app_process on this
-  // ROM swallows System.out/err, so the file is the only reliable signal.
-  const inner =
-    `CLASSPATH='${q(remoteDex)}' app_process /system/bin ${SESSION_INSTALLER_CLASS} '${q(remoteApk)}' '${q(logFile)}'`;
-  const cmd =
-    `${inner} >'${outFile}' 2>&1; echo "__SESSION_EXIT=$?"; ` +
-    `echo "__OUTFILE__"; cat '${outFile}' 2>/dev/null; echo "__ENDFILE__"; ` +
-    `echo "__AZLOG__"; ` +
-    `if [ -f '${logFile}' ]; then wc -c '${logFile}'; cat '${logFile}'; ` +
-    `else echo "(no log file — main() probably never started)"; fi; ` +
-    `echo "__ENDAZLOG__"; ` +
-    `rm -f '${outFile}' '${logFile}'; ` +
-    `echo "__LOGCAT__"; logcat -d -t 80 2>/dev/null | grep -iE 'AndroidRuntime|app_process|SessionInstaller|PackageInstaller|dalvik|zygote|avc:' | tail -n 30`;
+  const attemptsFile = `/data/local/tmp/az-session-attempts-${stamp}.txt`;
+  const dexQ = q(remoteDex);
+  const apkQ = q(remoteApk);
+  const logQ = q(logFile);
+  const outQ = q(outFile);
+  const attQ = q(attemptsFile);
+  const cls = SESSION_INSTALLER_CLASS;
+
+  // Ordered launch strategies. Stop at the first whose AZLOG contains "main entered".
+  // ANDROID_DATA points the oat/odex cache at a shell-writable dir — Android 10+
+  // otherwise can fail to load a CLASSPATH dex and exit 0 doing nothing.
+  const strategies: { name: string; cmd: string }[] = [
+    {
+      name: "android_data+app_process",
+      cmd: `ANDROID_DATA=/data/local/tmp CLASSPATH='${dexQ}' app_process /system/bin ${cls} '${apkQ}' '${logQ}'`,
+    },
+    {
+      name: "android_data+app_process64",
+      cmd: `ANDROID_DATA=/data/local/tmp CLASSPATH='${dexQ}' /system/bin/app_process64 /system/bin ${cls} '${apkQ}' '${logQ}'`,
+    },
+    {
+      name: "android_data+app_process32",
+      cmd: `ANDROID_DATA=/data/local/tmp CLASSPATH='${dexQ}' /system/bin/app_process32 /system/bin ${cls} '${apkQ}' '${logQ}'`,
+    },
+    {
+      name: "android_data+app_process+property",
+      cmd: `ANDROID_DATA=/data/local/tmp CLASSPATH='${dexQ}' app_process -Djava.class.path='${dexQ}' /system/bin ${cls} '${apkQ}' '${logQ}'`,
+    },
+    {
+      name: "android_data+dalvikvm",
+      cmd: `ANDROID_DATA=/data/local/tmp dalvikvm -cp '${dexQ}' ${cls} '${apkQ}' '${logQ}'`,
+    },
+    {
+      name: "android_data+dalvikvm64",
+      cmd: `ANDROID_DATA=/data/local/tmp /system/bin/dalvikvm64 -cp '${dexQ}' ${cls} '${apkQ}' '${logQ}'`,
+    },
+  ];
+
+  const tryBlocks = strategies
+    .map(
+      (s) => `
+if [ -z "$winner" ]; then
+  echo "TRY ${s.name}: ${s.cmd}" >> '${attQ}'
+  echo "----- ${s.name} -----" >> '${outQ}'
+  rm -f '${logQ}'
+  ${s.cmd} >> '${outQ}' 2>&1
+  ec=$?
+  main=no
+  if [ -f '${logQ}' ] && grep 'main entered' '${logQ}' >/dev/null 2>&1; then main=yes; fi
+  echo "${s.name} exit=$ec main=$main" >> '${attQ}'
+  last_exit=$ec
+  if [ "$main" = yes ]; then winner='${s.name}'; fi
+fi`,
+    )
+    .join("\n");
+
+  const cmd = `
+set +e
+mkdir -p /data/local/tmp/dalvik-cache
+rm -f '${outQ}' '${logQ}' '${attQ}'
+echo "__BINS__" >> '${attQ}'
+ls -l /system/bin/app_process /system/bin/app_process64 /system/bin/app_process32 /system/bin/dalvikvm /system/bin/dalvikvm64 '${dexQ}' >> '${attQ}' 2>&1
+echo "__ENDBINS__" >> '${attQ}'
+winner=""
+last_exit=1
+${tryBlocks}
+if [ -n "$winner" ]; then echo "__STRATEGY_WINNER__=$winner"; else echo "__STRATEGY_WINNER__=none"; fi
+echo "__ATTEMPTS__"
+cat '${attQ}' 2>/dev/null
+echo "__ENDATTEMPTS__"
+echo "__SESSION_EXIT=$last_exit"
+echo "__OUTFILE__"
+cat '${outQ}' 2>/dev/null
+echo "__ENDFILE__"
+echo "__AZLOG__"
+if [ -f '${logQ}' ]; then wc -c '${logQ}'; cat '${logQ}'; else echo "(no log file — main() probably never started)"; fi
+echo "__ENDAZLOG__"
+rm -f '${outQ}' '${logQ}' '${attQ}'
+echo "__LOGCAT__"
+logcat -d -t 80 2>/dev/null | grep -iE 'AndroidRuntime|app_process|SessionInstaller|PackageInstaller|dalvik|zygote|avc:' | tail -n 30
+`.trim();
+
   return shellText(session, ["sh", "-c", cmd]);
 }
 

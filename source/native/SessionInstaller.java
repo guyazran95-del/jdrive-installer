@@ -62,17 +62,26 @@ public final class SessionInstaller {
             logPath = args[1];
         }
 
+        // VERY FIRST work in main(): write "main entered" with Java I/O only.
+        // Do not touch any android.* class until this line is flushed, so a later
+        // linkage / class-load error still leaves a diagnostic file behind.
+        FileOutputStream raw = null;
         FileLog log = null;
         int exitCode = 2;
         try {
+            raw = new FileOutputStream(logPath, false);
+            raw.write("main entered\n".getBytes("UTF-8"));
+            raw.flush();
+            log = new FileLog(raw);
+        } catch (Throwable openFailed) {
             try {
-                log = new FileLog(logPath);
-            } catch (Throwable openFailed) {
                 System.err.println(
                         "SessionInstaller: cannot open log " + logPath + ": " + openFailed);
+            } catch (Throwable ignored) {
             }
+        }
 
-            logLine(log, "main entered");
+        try {
             logLine(log, "pid=" + Process.myPid()
                     + " uid=" + Process.myUid()
                     + " user=" + Process.myUserHandle());
@@ -96,13 +105,25 @@ public final class SessionInstaller {
         } catch (Throwable t) {
             logLine(log, "RESULT: FAILED " + t.getClass().getName() + ": " + t.getMessage());
             logStack(log, t);
-            System.err.println(
-                    "SessionInstaller FAILED: " + t.getClass().getSimpleName() + ": " + t.getMessage());
-            t.printStackTrace(System.err);
+            try {
+                System.err.println(
+                        "SessionInstaller FAILED: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+                t.printStackTrace(System.err);
+            } catch (Throwable ignored) {
+            }
             exitCode = 1;
         } finally {
             if (log != null) {
                 log.close();
+            } else if (raw != null) {
+                try {
+                    raw.flush();
+                } catch (Throwable ignored) {
+                }
+                try {
+                    raw.close();
+                } catch (Throwable ignored) {
+                }
             }
             System.exit(exitCode);
         }
@@ -372,17 +393,17 @@ public final class SessionInstaller {
     }
 
     private static final class FileLog {
-        private final long startMs = SystemClock.elapsedRealtime();
+        // Pure Java: System.currentTimeMillis, no android.* so logging keeps
+        // working even if an Android class fails to link later.
+        private final long startMs = System.currentTimeMillis();
         private final FileOutputStream out;
 
-        FileLog(String path) throws IOException {
-            File file = new File(path);
-            this.out = new FileOutputStream(file, false);
-            log("log opened path=" + file.getAbsolutePath());
+        FileLog(FileOutputStream out) {
+            this.out = out;
         }
 
         void log(String msg) {
-            long elapsed = SystemClock.elapsedRealtime() - startMs;
+            long elapsed = System.currentTimeMillis() - startMs;
             writeRaw(elapsed + "ms " + msg);
         }
 
